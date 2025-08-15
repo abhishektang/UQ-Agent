@@ -1,2 +1,2 @@
 # UQ-Agent
-An agent that will
+An agent to make your UQ life simpler :)
