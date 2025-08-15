@@ -1,0 +1,9 @@
+FROM llama3.1
+
+# set the temperature to 1  [higher is more creative]
+
+PARAMETER temperature 0.3
+
+SYSTEM """
+ignore 'My courses'
+"""
