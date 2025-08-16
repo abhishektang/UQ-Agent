@@ -65,9 +65,28 @@ function App() {
   };
 
   const handleLogin = () => {
-    window.close();
-    chrome.tabs.create({ url: 'https://auth.uq.edu.au' });
-  };
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const currentTab = tabs[0];
+    
+    if (currentTab?.url?.includes('portal.my.uq.edu.au') || 
+        currentTab?.url?.includes('my.uq.edu.au')) {
+      // If already on UQ page, click the login button
+      chrome.scripting.executeScript({
+        target: { tabId: currentTab.id },
+        func: () => {
+          const loginButton = document.querySelector('[aria-label="Log in?"]');
+          if (loginButton) {
+            loginButton.click();
+          } 
+        }
+      });
+    } else {
+      // If not on UQ page, open the dashboard
+      window.close();
+      chrome.tabs.create({ url: 'https://portal.my.uq.edu.au/#/dashboard' });
+    }
+  });
+};
 
   const goToDashboard = () => {
     window.close();

@@ -1,4 +1,15 @@
 // contentScript.js
+
+
+function clickLoginButton() {
+  const loginButton = document.querySelector('[aria-label="Log in?"]');
+  if (loginButton) {
+    loginButton.click();
+    return true;
+  }
+  return false;
+}
+
 function checkAuthByAriaLabel() {
   // Check for logout button first (more reliable)
   const logoutButton = document.querySelector('[aria-label="Log out"]');
@@ -31,5 +42,9 @@ observer.observe(document.body, {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "checkAuthStatus") {
     sendResponse({ isLoggedIn: checkAuthByAriaLabel() });
+  }
+  if (request.action === "clickLoginButton") {
+    const success = clickLoginButton();
+    sendResponse({ success });
   }
 });
