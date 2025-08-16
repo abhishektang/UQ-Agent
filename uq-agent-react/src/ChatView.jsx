@@ -14,7 +14,7 @@ import {
   orderBy  // Add this import
 } from 'firebase/firestore';
 import Message from './Message';
-import './styles.css';
+import './ChatViewstyle.css';
 
 export default function ChatView() {
   const [messages, setMessages] = useState([]);
@@ -23,6 +23,8 @@ export default function ChatView() {
   const [activeChat, setActiveChat] = useState(null);
   const [username, setUsername] = useState('');
   const [authInitialized, setAuthInitialized] = useState(false);
+  const [creatingChat, setCreatingChat] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef(null);
 
   // Get username from dashboard
@@ -62,6 +64,26 @@ export default function ChatView() {
 
     initialize();
   }, []);
+
+  useEffect(() => {
+  let unsubscribe = () => {};
+
+  if (activeChat && username) {
+    const chatRef = doc(db, 'users', username, 'chats', activeChat);
+    
+    unsubscribe = onSnapshot(chatRef, (doc) => {
+      if (doc.exists()) {
+        setMessages(doc.data().messages || []);
+        // Auto-scroll to bottom when new messages arrive
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    });
+  }
+
+  return () => unsubscribe();
+}, [activeChat, username]);
 
   // Initialize user's chat structure
   const initializeUserChats = async (username) => {
@@ -130,105 +152,116 @@ export default function ChatView() {
 
   // Send a new message
   const handleSendMessage = async () => {
-  // 1. Validate basic requirements
-  if (!inputValue?.trim()) {
-    console.log("Message cannot be empty");
-    return;
-  }
+   if (!inputValue.trim() || !username) return;
 
-  if (!username) {
-    console.log("Username not set");
-    return;
-  }
-
-  // 2. Ensure database connection
-  if (!db) {
-    console.error("Firestore not initialized");
-    return;
-  }
-
+  setIsSending(true);
   try {
-    // 3. Get or create chat ID with verification
-    let targetChatId = activeChat;
-    if (!targetChatId) {
-      console.log("Creating new chat session...");
-      targetChatId = await startNewChat(username);
-      if (!targetChatId) throw new Error("Failed to create new chat");
-      
-      setActiveChat(targetChatId);
-      await new Promise(resolve => setTimeout(resolve, 50)); // Allow state update
-    }
-
-    // 4. Verify ID format (critical for Firestore)
-    if (typeof targetChatId !== 'string' || targetChatId.length < 1) {
-      throw new Error(`Invalid chat ID: ${targetChatId}`);
-    }
-
-    // 5. Create document reference with validation
-    const chatRef = doc(db, 'users', username, 'chats', targetChatId);
-    console.log("Document reference created for:", chatRef.path);
-
-    // 6. Get current messages with empty array fallback
-    const chatSnap = await getDoc(chatRef);
-    const currentMessages = chatSnap.exists() ? chatSnap.data().messages || [] : [];
-
-    // 7. Add user message
+    // Optimistic UI update - show message immediately
     const userMessage = {
       text: inputValue.trim(),
       role: 'User',
     };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setInputValue('');
+    
+    // Scroll to bottom after optimistically adding message
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
 
+    let targetChatId = activeChat;
+    if (!targetChatId) {
+      targetChatId = await startNewChat(username);
+      setActiveChat(targetChatId);
+    }
+
+    const chatRef = doc(db, 'users', username, 'chats', targetChatId);
+    const chatSnap = await getDoc(chatRef);
+    const currentMessages = chatSnap.exists() ? chatSnap.data().messages || [] : [];
+
+    // Update Firestore with user message
     await updateDoc(chatRef, {
       messages: [...currentMessages, userMessage],
       lastUpdated: serverTimestamp()
     });
 
-    setInputValue('');
+    // Generate and add model response
+    const responseText = inputValue.toLowerCase().includes('book') && 
+                        inputValue.toLowerCase().includes('library room')
+      ? "I can help you book a library room. Please wait while I navigate to the booking system..."
+      : "I can help with various UQ tasks. Currently I support:\n- Booking library rooms\n\nTry saying 'book a library room'";
 
-    // 8. Generate model response
-    setTimeout(async () => {
-      try {
-        const responseText = inputValue.toLowerCase().includes('book') && 
-                            inputValue.toLowerCase().includes('library room')
-          ? "I can help you book a library room. Please wait while I navigate to the booking system..."
-          : "I can help with various UQ tasks. Currently I support:\n- Booking library rooms\n\nTry saying 'book a library room'";
+    const modelMessage = {
+      text: responseText,
+      role: 'Model',
+    };
 
-        const modelMessage = {
-          text: responseText,
-          role: 'Model',
-        };
+    // Add model response optimistically
+    setMessages(prev => [...prev, modelMessage]);
+    
+    // Update Firestore with model response
+    await updateDoc(chatRef, {
+      messages: [...currentMessages, userMessage, modelMessage],
+      lastUpdated: serverTimestamp()
+    });
 
-        // Get fresh messages to include user message
-        const updatedSnap = await getDoc(chatRef);
-        const updatedMessages = updatedSnap.data()?.messages || [];
-        
-        await updateDoc(chatRef, {
-          messages: [...updatedMessages, modelMessage],
-          lastUpdated: serverTimestamp()
+    if (responseText.includes('book a library room')) {
+      bookLibraryRoom();
+    }
+
+    // Scroll to bottom after model response
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  } catch (error) {
+    console.error("Error sending message:", error);
+    // Rollback optimistic update if there's an error
+    setMessages(prev => prev.filter(msg => msg.text !== inputValue.trim()));
+  }
+  finally {
+  setIsSending(false);
+}
+};
+
+const handleNewChat = async () => {
+  try {
+    // 1. Show loading state
+    setCreatingChat(true);
+    
+    // 2. Verify user is authenticated
+    if (!auth.currentUser) {
+      await initAuth();
+    }
+
+    // 3. Ensure username exists
+    if (!username) {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const currentTab = tabs[0];
+      if (currentTab?.url?.includes('portal.my.uq.edu.au')) {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          func: () => document.querySelector('.page__header-user-name')?.textContent?.trim() || 'Anonymous'
         });
-
-        if (responseText.includes('book a library room')) {
-          bookLibraryRoom();
-        }
-      } catch (modelError) {
-        console.error("Model response failed:", {
-          error: modelError.message,
-          chatId: targetChatId,
-          username
-        });
+        setUsername(results[0]?.result || 'Anonymous');
       }
-    }, 1000);
+    }
+
+    // 4. Create new chat
+    const newChatId = await startNewChat(username || 'Anonymous');
+    setActiveChat(newChatId);
+    setMessages([]);
 
   } catch (error) {
-    console.error("Message sending failed - full diagnostics:", {
+    console.error('Failed to create new chat:', {
       error: error.message,
-      stack: error.stack,
-      activeChat,
       username,
-      dbInitialized: !!db,
-      authState: auth.currentUser?.uid,
-      timestamp: new Date().toISOString()
+      authState: auth.currentUser?.uid
     });
+    // Show error to user
+    alert('Failed to create new chat. Please try again.');
+  } finally {
+    setCreatingChat(false);
   }
 };
 
@@ -258,9 +291,19 @@ export default function ChatView() {
     <div className="chat-interface">
       {/* Sidebar */}
       <div className="chat-sidebar">
-        <button onClick={startNewChat} className="new-chat-btn">
-          + New Chat
-        </button>
+        <button 
+  onClick={handleNewChat}
+  disabled={creatingChat}
+  className="new-chat-btn"
+>
+  {creatingChat ? (
+    <>
+      <span className="spinner"></span> Creating...
+    </>
+  ) : (
+    '+ New Chat'
+  )}
+</button>
         <div className="chat-history">
           <h3>Chat History</h3>
           {chatHistory.map((chat) => (
@@ -286,7 +329,7 @@ export default function ChatView() {
         <div className="chat-messages">
           {messages.length === 0 ? (
             <div className="welcome-message">
-              <h2>UQ Assistant</h2>
+              <h2>UQ Agent</h2>
               <p>How can I help you today?</p>
               <div className="suggestions">
                 <button onClick={() => setInputValue('How do I book a library room?')}>
@@ -298,15 +341,16 @@ export default function ChatView() {
               </div>
             </div>
           ) : (
-             <div className="messages-container">
-        {messages.map((message, index) => (
-          <Message 
-            key={index} 
-            text={message.text} 
-            role={message.role}  // Changed from sender to role
-          />
-        ))}
-      </div>
+            <div className="messages-container">
+            {messages.map((message, index) => (
+                <Message 
+                key={`${message.role}-${index}-${message.text.substring(0, 5)}`} 
+                text={message.text} 
+                role={message.role}
+                />
+            ))}
+            <div ref={messagesEndRef} />
+            </div>
     )}
           <div ref={messagesEndRef} />
         </div>
@@ -317,11 +361,15 @@ export default function ChatView() {
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Message UQ Assistant..."
+            placeholder="Message UQ Agent..."
           />
-          <button onClick={handleSendMessage} className="send-btn">
-            Send
-          </button>
+          <button 
+            onClick={handleSendMessage} 
+            className="send-btn"
+            disabled={isSending}
+            >
+            {isSending ? 'Sending...' : 'Send'}
+            </button>
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import LoginView from './LoginView';
 import ChatView from './ChatView';
-import './styles.css';
+import './Appstyle.css';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);

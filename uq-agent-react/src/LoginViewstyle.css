@@ -1,0 +1,133 @@
+/* Base Styles (shared across both views) */
+:root {
+  --uq-purple: #51247A;
+  --uq-purple-light: #6d2f9a;
+  --uq-purple-lighter: #8a4bb3;
+  --uq-purple-lightest: #e6d6f2;
+  --uq-accent: #FFD200;
+  --uq-accent-dark: #e6bd00;
+  --text-dark: #333;
+  --text-light: #f5f5f5;
+  --bg-light: #f9f9f9;
+  --border-radius: 8px;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  --transition: all 0.3s ease;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: Segoe UI,Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;
+}
+
+/* Login View Styles */
+
+.logo {
+  width: 80px;
+  height: 80px;
+  margin-bottom: -175px;
+  filter: drop-shadow(0 2px 4px rgba(81, 36, 122, 0.2));
+}
+
+.login-view p {
+  font-weight: 600; /* Semi-bold */
+  margin-bottom: 30px;
+  color: var(--uq-purple);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.login-view {
+  width: 100%;
+  height: 100%;
+  padding-bottom: 30px;
+  min-height: inherit; /* Match parent container */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 100px;
+  text-align: center;
+  background-image: 
+    linear-gradient(to bottom, rgba(81, 36, 122, 0.03) 1px, transparent 1px);
+  background-size: 100% 10px;
+}
+
+.btn {
+  background: var(--uq-purple);
+  color: white;
+  border: none;
+  padding: 12px;
+  margin-bottom: 10px;
+  border-radius: 25px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  font-size: 0.9rem;
+  box-shadow: 0 2px 5px rgba(81, 36, 122, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn:hover {
+  background: var(--uq-purple-light);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(81, 36, 122, 0.3);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+/* Chat Interface Styles (same as before) */
+.chat-interface {
+  display: flex;
+  height: 600px;
+  width: 900px;
+  background: white;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+
+/* Shared Components */
+.loading-spinner {
+  border: 3px solid var(--uq-purple-lightest);
+  border-top: 3px solid var(--uq-purple);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .login-view {
+    width: 100%;
+    height: 100vh;
+    border-radius: 0;
+  }
+  
+  .chat-interface {
+    width: 100%;
+    height: 100vh;
+    border-radius: 0;
+    flex-direction: column;
+  }
+  
+  .chat-sidebar {
+    width: 100%;
+    height: 150px;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
