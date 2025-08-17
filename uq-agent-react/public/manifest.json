@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "UQ Agent",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "An assistant for UQ students to automate tasks like booking library rooms",
   "action": {
     "default_popup": "index.html",
@@ -24,8 +24,11 @@
     "storage",
      "cookies",
      "scripting",
+     "nativeMessaging",
+     "identity",
       "https://auth.uq.edu.au/",
-  "https://portal.my.uq.edu.au/"
+  "https://portal.my.uq.edu.au/",
+  "http://localhost:3001/"
   ],
   "host_permissions": [
     "*://portal.my.uq.edu.au/*",
@@ -37,5 +40,8 @@
       "js": ["contentScript.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' http://localhost:3001 https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com"
+  }
 }

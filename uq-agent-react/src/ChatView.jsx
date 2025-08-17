@@ -14,6 +14,7 @@ import {
   orderBy  // Add this import
 } from 'firebase/firestore';
 import Message from './Message';
+import { executePythonScript } from '../src/utils/pythonServer';
 import './ChatViewstyle.css';
 
 export default function ChatView() {
@@ -187,10 +188,25 @@ export default function ChatView() {
     });
 
     // Generate and add model response
-    const responseText = inputValue.toLowerCase().includes('book') && 
-                        inputValue.toLowerCase().includes('library room')
-      ? "I can help you book a library room. Please wait while I navigate to the booking system..."
-      : "I can help with various UQ tasks. Currently I support:\n- Booking library rooms\n\nTry saying 'book a library room'";
+    let responseText;
+    try {
+      // Show a temporary "processing" message
+      setMessages(prev => [...prev, {
+        text: "Processing your request...",
+        role: 'Model'
+      }]);
+      
+      // Send the entire prompt to Python backend
+      const response = await executePythonScript(inputValue.trim());
+      console.log("Python response:", response.message);
+      responseText = response.message || "I've processed your request";
+      
+      // Remove the temporary message
+      setMessages(prev => prev.filter(msg => msg.text !== "Processing your request..."));
+    } catch (error) {
+      responseText = "Sorry, I couldn't process that request. Please try again.";
+      console.error("Processing error:", error);
+    }
 
     const modelMessage = {
       text: responseText,
@@ -205,10 +221,6 @@ export default function ChatView() {
       messages: [...currentMessages, userMessage, modelMessage],
       lastUpdated: serverTimestamp()
     });
-
-    if (responseText.includes('book a library room')) {
-      bookLibraryRoom();
-    }
 
     // Scroll to bottom after model response
     setTimeout(() => {

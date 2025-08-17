@@ -6,10 +6,15 @@ import time
 import json
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
+
 
 from vector_db import initialize_vector_db
 
-
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class Action(Enum):
     CLICK = "click"
     HOVER = "hover"
@@ -651,7 +656,7 @@ def get_active_page(context):
     return None
 
 
-def interactive_angular_navigator():
+def interactive_angular_navigator(prompt):
     with sync_playwright() as p:
         try:
             browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
@@ -682,7 +687,7 @@ def interactive_angular_navigator():
 
             while True:
                 try:
-                    user_prompt = input("\nWhat would you like to do? (or 'quit' to exit): ").strip()
+                    user_prompt = prompt.strip()
                     if user_prompt.lower() in ('quit', 'exit'):
                         break
                     if not user_prompt:
@@ -729,6 +734,96 @@ def interactive_angular_navigator():
                 browser.close()
             except:
                 pass
+            
+
+PORT = 3001  # Different from your Vite port
+
+class RequestHandler(BaseHTTPRequestHandler):
+    def _set_cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+    
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self._set_cors_headers()
+        self.end_headers()
+    
+    def do_POST(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            # Process your prompt
+            result = self.process_prompt(data.get('prompt', ''))
+            
+            # Always return valid JSON
+            response = {
+                'status': 'success',
+                'message': result.get('message', ''),
+                'details': result.get('details', {})
+            }
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+            
+        except Exception as e:
+            # Error response
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'error',
+                'message': str(e)
+            }).encode('utf-8'))
+    
+    def process_prompt(self, prompt):
+        
+        try:
+
+                # Generic processing for other prompts
+            plan = {
+                "steps": [
+                    {
+                        "action": "evaluate",
+                        "description": f"Analyzing: {prompt}",
+                        "result": f"I'll help you with: {prompt}"
+                    }
+                ]
+            }
+            interactive_angular_navigator(prompt)
+            success = execute_plan(CURRENT_PAGE, get_navigation_plan(prompt))
+            
+            return {
+                "status": "success" if success else "error",
+                "message": self.generate_response(prompt, plan, success),
+                "details": plan
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Error processing your request: {str(e)}"
+            }
+
+    def generate_response(self, prompt, plan, success):
+        """Generate natural language response based on the plan"""
+        if not success:
+            return "I couldn't complete that action. Please try again."
+        
+        # Default response
+        actions = [step['description'] for step in plan.get('steps', [])]
+        return f"I've completed these actions for you:\n- " + "\n- ".join(actions)
+
+def run_server():
+    server_address = ('', 3001)
+    httpd = HTTPServer(server_address, RequestHandler)
+    print(f"Starting server on port 3001")
+    httpd.serve_forever()
 
 if __name__ == "__main__":
-    interactive_angular_navigator()
+    run_server()
