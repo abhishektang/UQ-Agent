@@ -1,316 +1,457 @@
 from playwright.sync_api import sync_playwright
-import requests
-import json
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Any
+from enum import Enum
+import time
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
 
-# Ollama Configuration
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "uqagent"  # Replace with your preferred model
+from vector_db import initialize_vector_db
 
 
-def query_ollama(prompt: str, context: str = "") -> Optional[str]:
-    """Query the Ollama API with a prompt and optional context"""
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": f"{context}\n\n{prompt}",
-        "stream": False,
-        "options": {"temperature": 0.3}  # More deterministic responses
+class Action(Enum):
+    CLICK = "click"
+    HOVER = "hover"
+    FILL = "fill"
+    TYPE = "type"
+
+
+ELEMENT_CACHE = {}
+CURRENT_PAGE = None
+LAST_ACTION_TIME = 0
+
+VECTOR_DB = initialize_vector_db()
+
+
+def get_navigation_plan(user_prompt: str) -> Dict:
+    """
+    Get navigation plan for a user's prompt by querying similar examples from vector database.
+
+    Args:
+        user_prompt (str): The user's goal or command to generate a plan for
+
+    Returns:
+        Dict: A dictionary containing the action plan with steps
+    """
+    # Get similar examples from vector database
+    similar_examples = VECTOR_DB.get_similar_examples(user_prompt)
+    # Return the first matching plan if found, otherwise return empty plan
+    return similar_examples[0]["plan"] if similar_examples else {"steps": []}
+
+def get_cache_key(url: str, element_description: str) -> str:
+    return f"{url}|||{element_description.lower().strip()}"
+
+
+def cache_element_selector(url: str, element_description: str, selector: str, element_info: Dict):
+    cache_key = get_cache_key(url, element_description)
+    ELEMENT_CACHE[cache_key] = {
+        'selector': selector,
+        'element_info': element_info,
+        'timestamp': time.time()
     }
 
+
+def get_cached_element(url: str, element_description: str) -> Optional[Tuple[str, Dict]]:
+    cache_key = get_cache_key(url, element_description)
+    cached = ELEMENT_CACHE.get(cache_key)
+    if cached:
+        return cached['selector'], cached['element_info']
+    return None, None
+
+
+def find_text_area_element(page, description: str) -> Optional[Any]:
+    common_editors = [
+        'div[role="textbox"]',
+        'div[contenteditable="true"]',
+        '.ql-editor',
+        '.tox-edit-area',
+        '.cke_contents',
+        '.ProseMirror',
+        '.public-DraftEditor-content',
+        '.w-md-editor-content',
+        'textarea.large-textarea',
+        'textarea[aria-label="Post content"]'
+    ]
+
+    for selector in common_editors:
+        try:
+            elements = page.query_selector_all(selector)
+            for element in elements:
+                try:
+                    box = element.bounding_box()
+                    if box and box['width'] > 300 and box['height'] > 100:
+                        return element
+                except:
+                    continue
+        except:
+            continue
+
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
-        response.raise_for_status()
-        return json.loads(response.text)["response"]
-    except Exception as e:
-        print(f"Error querying Ollama: {e}")
+        elements = page.query_selector_all('textarea, div[contenteditable="true"]')
+        largest_area = None
+        max_size = 0
+
+        for element in elements:
+            try:
+                box = element.bounding_box()
+                if box:
+                    size = box['width'] * box['height']
+                    if size > max_size:
+                        max_size = size
+                        largest_area = element
+            except:
+                continue
+
+        return largest_area
+    except:
         return None
 
 
-def get_angular_element_descriptions(page) -> List[Dict]:
-    """Get enhanced descriptions of interactive elements with AngularJS attributes"""
-    # Query all interactive elements including Angular-specific ones
-    elements = page.query_selector_all(
-        'button, input, a, [ng-click], [ng-model], [role=button], [role=link], '
-        '[bb-click-to-invoke-child], [analytics-id], article.element-card, '
-        '[data-analytics-id], .click-to-invoke-container, .ax-focusable-title'
-    )
+def find_course_element(page, course_code: str) -> Optional[Any]:
+    """Specialized function to find course elements in UQ systems"""
+    # Clean the course code (remove brackets and spaces)
+    clean_code = course_code.replace('[', '').replace(']', '').replace(' ', '').upper()
 
-    descriptions = []
-    for element in elements:
+    # Try different strategies to find the course element
+    selectors = [
+        f'[title*="{clean_code}"]',  # Match title attribute
+        f'[aria-label*="{clean_code}"]',  # Match aria-label
+        f'[data-course-id*="{clean_code}"]',  # Match data attributes
+        f'[id*="{clean_code.lower()}"]',  # Match ID
+        f'[class*="course-{clean_code.lower()}"]',  # Match class
+        f'[href*="{clean_code.lower()}"]',  # Match href
+        f'text=/.*{clean_code}.*/i',  # Text contains course code
+        f'text=/.*{clean_code[:4]}.*{clean_code[4:]}.*/i'  # Text with possible space
+    ]
+
+    for selector in selectors:
         try:
-            # Get standard attributes
-            tag = element.evaluate("el => el.tagName.toLowerCase()")
-            text = element.inner_text().strip() or ""
-            placeholder = element.get_attribute("placeholder") or ""
-            aria_label = element.get_attribute("aria-label") or ""
-            name = element.get_attribute("name") or ""
-            id = element.get_attribute("id") or ""
-            title = element.get_attribute("title") or ""
-            class_list = element.get_attribute("class") or ""
-
-            # Get Angular-specific attributes
-            ng_click = element.get_attribute("ng-click") or ""
-            ng_model = element.get_attribute("ng-model") or ""
-            analytics_id = element.get_attribute("analytics-id") or ""
-            bb_click = element.get_attribute("bb-click-to-invoke-child") or ""
-            data_analytics_id = element.get_attribute("data-analytics-id") or ""
-
-            # Special handling for course cards
-            if tag == "article" and "element-card" in class_list:
-                course_name = element.query_selector(".js-course-title-element")
-                if course_name:
-                    text = course_name.inner_text().strip()
-                    id = element.get_attribute("id") or ""
-                    descriptions.append({
-                        "tag": tag,
-                        "text": text,
-                        "id": id,
-                        "type": "course_card",
-                        "selector": f"article#{id}" if id else f"article:has-text('{text}')"
-                    })
-                continue
-
-            # Special handling for click-to-invoke containers
-            if "click-to-invoke-container" in class_list:
-                title_element = element.query_selector('.ax-focusable-title')
-                if title_element:
-                    text = title_element.inner_text().strip()
-                    descriptions.append({
-                        "tag": tag,
-                        "text": text,
-                        "type": "click_to_invoke",
-                        "selector": f".click-to-invoke-container:has-text('{text}')"
-                    })
-                continue
-
-            # Build description
-            if any([text, placeholder, aria_label, name, id, ng_click, ng_model, analytics_id, bb_click,
-                    data_analytics_id, title]):
-                desc = {
-                    "tag": tag,
-                    "text": text,
-                    "placeholder": placeholder,
-                    "aria_label": aria_label,
-                    "name": name,
-                    "id": id,
-                    "title": title,
-                    "ng_click": ng_click,
-                    "ng_model": ng_model,
-                    "analytics_id": analytics_id,
-                    "bb_click": bb_click,
-                    "data_analytics_id": data_analytics_id,
-                    "selector": ""
-                }
-
-                # Create a good selector for this element
-                if id:
-                    desc["selector"] = f"#{id}"
-                elif data_analytics_id:
-                    desc["selector"] = f"[data-analytics-id='{data_analytics_id}']"
-                elif text:
-                    desc["selector"] = f"{tag}:has-text('{text}')"
-                elif aria_label:
-                    desc["selector"] = f"{tag}[aria-label='{aria_label}']"
-                elif name:
-                    desc["selector"] = f"{tag}[name='{name}']"
-                elif analytics_id:
-                    desc["selector"] = f"{tag}[analytics-id='{analytics_id}']"
-                elif title:
-                    desc["selector"] = f"{tag}[title='{title}']"
-
-                descriptions.append(desc)
-        except Exception as e:
+            element = page.query_selector(selector)
+            if element:
+                return element
+        except:
             continue
 
-    return descriptions
+    # Fallback: Find by text in course cards
+    try:
+        course_cards = page.query_selector_all('.course-card, [class*="course-node"]')
+        for card in course_cards:
+            text = card.inner_text().upper().replace(' ', '')
+            if clean_code in text:
+                return card
+    except:
+        pass
+
+    return None
+
+def find_element_by_text(page, text: str, threshold: int = 5) -> Optional[Any]:
+    # First try to find course elements if text contains a course code
+    course_code_match = re.search(r'(\[?[A-Za-z]{2,}\s?\d{3,}\]?)', text.upper())
+    if course_code_match:
+        course_code = course_code_match.group(1)
+        course_element = find_course_element(page, course_code)
+        if course_element:
+            return course_element
+
+    # Original fuzzy matching logic for other elements
+    try:
+        elements = page.query_selector_all(
+            'button, a, [role=button], [role=link], [ng-click], [click], input, textarea, [role="textbox"], div[contenteditable="true"]')
+    except:
+        return None
+
+    best_match = None
+    highest_score = 0
+
+    for element in elements:
+        try:
+            element_text = element.inner_text().strip()
+            if not element_text:
+                if element.evaluate('el => el.tagName.toLowerCase()') in ('input', 'textarea'):
+                    label_text = element.evaluate('''el => {
+                        const id = el.id;
+                        if (id) {
+                            const label = document.querySelector(`label[for="${id}"]`);
+                            return label ? label.textContent.trim() : '';
+                        }
+                        return '';
+                    }''')
+                    placeholder = element.get_attribute('placeholder') or ""
+                    nearby_text = element.evaluate('''el => {
+                        const container = el.closest('div, li, section, article');
+                        return container ? container.textContent.trim() : '';
+                    }''')
+                    combined_text = f"{label_text} {placeholder} {nearby_text}".strip()
+                    if combined_text:
+                        element_text = combined_text
+
+            score = fuzz.token_sort_ratio(element_text.lower(), text.lower())
+            if score > highest_score and score >= threshold:
+                highest_score = score
+                best_match = element
+        except:
+            continue
+
+    return best_match if highest_score >= threshold else None
 
 
-def find_best_matching_element(page, element_description: str) -> Optional[Dict]:
-    """Find the best matching element based on the description, strongly preferring title matches."""
-    elements = get_angular_element_descriptions(page)
-    desc_lower = element_description.lower()
-
-    # Step 1: Try to find direct title matches first
-    title_matches = []
-    for el in elements:
-        title_text = str(el.get("title") or "").lower()
-        heading_text = str(el.get("text") or "").lower()
-        aria_label = str(el.get("aria_label") or "").lower()
-
-        # A title match is considered exact or contains the search phrase
-        if desc_lower in title_text or desc_lower in heading_text:
-            score = 100  # Very high base score for title matches
-            if el.get("tag") == "button":
-                score += 10  # Button bonus
-            title_matches.append((score, el))
-
-    if title_matches:
-        return max(title_matches, key=lambda x: x[0])[1]
-
-    # Step 2: If no title matches, fall back to general scoring
-    scored_elements = []
-    for el in elements:
-        score = 0
-
-        if "text" in el and desc_lower in str(el["text"]).lower():
-            score += 3
-        if "aria_label" in el and desc_lower in str(el["aria_label"]).lower():
-            score += 3
-        if "placeholder" in el and desc_lower in str(el["placeholder"]).lower():
-            score += 2
-        if "name" in el and desc_lower in str(el["name"]).lower():
-            score += 2
-        if "id" in el and desc_lower in str(el["id"]).lower():
-            score += 1
-
-        # Button preference
-        if el.get("tag") == "button":
-            score += 2
-
-        if score > 0:
-            scored_elements.append((score, el))
-
-    return max(scored_elements, key=lambda x: x[0])[1] if scored_elements else None
+def ensure_element_visible(page, element):
+    try:
+        element.evaluate('element => element.scrollIntoView({block: "center"})')
+        element.wait_for_element_state("visible", timeout=5000)
+        element.wait_for_element_state("stable", timeout=5000)
+        page.wait_for_timeout(500)  # Increased delay for stability
+    except Exception as e:
+        print(f"Warning: Could not ensure element visibility - {e}")
 
 
-def perform_action_on_element(page, action: str, element_description: str) -> bool:
-    """Perform the specified action on the matching element"""
-    element_info = find_best_matching_element(page, element_description)
+def perform_action_on_element(page, action: Action, element_description: str, value: str = None) -> bool:
+    global LAST_ACTION_TIME
 
-    if not element_info:
-        print(f"Could not find element matching: {element_description}")
+    try:
+        current_url = page.url
+    except:
+        print("Page is no longer available")
+        return False
+
+    # Extract potential course code from description
+    course_code_match = re.search(r'(\[?[A-Za-z]{2,}\s?\d{3,}\]?)', element_description.upper())
+    if course_code_match:
+        course_code = course_code_match.group(1).replace('[', '').replace(']', '').replace(' ', '')
+
+        # First try to find exact course code element
+        course_elements = page.query_selector_all('[class*="course"], [id*="course"], [data-course-code]')
+        for element in course_elements:
+            try:
+                element_text = element.inner_text().strip()
+                if f"[{course_code}]" in element_text or course_code in element_text.replace(' ', ''):
+                    return _execute_action(page, action, element, element_description, value)
+            except:
+                continue
+
+    # Rest of the original function remains the same...
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except:
+        print("Warning: Page took too long to load, proceeding anyway")
+
+    cached_selector, _ = get_cached_element(current_url, element_description)
+    if cached_selector:
+        try:
+            element = page.query_selector(cached_selector)
+            if element:
+                return _execute_action(page, action, element, element_description, value)
+        except Exception as e:
+            print(f"Cache action failed: {e}")
+
+    if action in (Action.FILL, Action.TYPE) and any(word in element_description.lower()
+                                                    for word in
+                                                    ['post', 'content', 'reply', 'comment', 'text', 'message']):
+        element = find_text_area_element(page, element_description)
+        if element:
+            try:
+                return _execute_action(page, action, element, element_description, value)
+            except Exception as e:
+                print(f"Action failed on text area: {e}")
+
+    element = find_element_by_text(page, element_description)
+    if element:
+        try:
+            return _execute_action(page, action, element, element_description, value)
+        except Exception as e:
+            print(f"Action failed on found element: {e}")
+
+    print(f"Could not find element matching: {element_description}")
+    return False
+
+
+def _execute_action(page, action: Action, element, element_description: str, value: str = None) -> bool:
+    global CURRENT_PAGE, LAST_ACTION_TIME
+
+    try:
+        current_url = page.url
+    except:
+        print("Page is no longer available")
         return False
 
     try:
-        selector = element_info.get("selector")
-        if not selector:
-            print(f"No valid selector for element: {element_info}")
-            return False
+        tag = element.evaluate("el => el.tagName.toLowerCase()")
+        text = element.inner_text().strip()
+        if not text and tag in ('input', 'textarea', 'div'):
+            text = element.get_attribute('placeholder') or ""
+            label = element.evaluate('''el => {
+                const id = el.id;
+                if (id) {
+                    const label = document.querySelector(`label[for="${id}"]`);
+                    return label ? label.textContent.trim() : '';
+                }
+                return '';
+            }''')
+            if label:
+                text = f"{text} {label}".strip()
+        selector = f"{tag}:has-text('{text}')" if text else f"{tag}"
 
-        element = page.query_selector(selector)
-        if not element:
-            print(f"Element not found with selector: {selector}")
-            return False
+        ensure_element_visible(page, element)
 
-        if action == "click":
+        if action == Action.CLICK:
+            # Try multiple click strategies
+            try:
+                element.click(timeout=10000)
+            except:
+                # Fallback to JavaScript click
+                page.evaluate('(element) => element.click()', element)
+
+            cache_element_selector(
+                current_url,
+                element_description,
+                selector,
+                {"type": "text_match", "text": text}
+            )
+            LAST_ACTION_TIME = time.time()
+            return True
+        elif action == Action.HOVER:
+            element.hover(timeout=10000)
+            cache_element_selector(
+                current_url,
+                element_description,
+                selector,
+                {"type": "text_match", "text": text}
+            )
+            LAST_ACTION_TIME = time.time()
+            return True
+        elif action == Action.FILL and value:
+            element.fill(value)
+            cache_element_selector(
+                current_url,
+                element_description,
+                selector,
+                {"type": "input_field", "text": text}
+            )
+            LAST_ACTION_TIME = time.time()
+            return True
+        elif action == Action.TYPE and value:
             element.click()
-            return True
-        elif action.startswith("type:"):
-            text_to_type = action.split("type:")[1].strip()
-            element.fill(text_to_type)
-            return True
-        elif action == "press_enter":
-            element.press("Enter")
-            return True
-        elif action == "hover":
-            element.hover()
+            page.keyboard.type(value)
+            cache_element_selector(
+                current_url,
+                element_description,
+                selector,
+                {"type": "text_area", "text": text}
+            )
+            LAST_ACTION_TIME = time.time()
             return True
     except Exception as e:
-        print(f"Error performing action: {e}")
+        print(f"Error executing action: {e}")
         return False
 
+    return False
 
-def generate_ai_prompt(user_prompt: str, page_context: Dict) -> str:
-    """Generate a detailed prompt for the AI"""
-    return f"""
-    The user wants to interact with an AngularJS webpage. Based on the page context below, determine:
-    1. What action they want to perform (click, type text, press enter, hover)
-    2. Which element they want to interact with (prioritize visible text, aria-labels, titles, course names)
 
-    User command: "{user_prompt}"
+def parse_user_command(user_prompt: str) -> Tuple[Action, str, Optional[str]]:
+    user_prompt = user_prompt.lower().strip()
 
-    Current page title: {page_context.get('title', '')}
-    Current URL: {page_context.get('url', '')}
+    type_match = re.match(r'^(type|write|enter)\s+(?:in|into)\s+(.+?)\s+(.+)$', user_prompt)
+    if type_match:
+        return Action.TYPE, type_match.group(2).strip(), type_match.group(3).strip()
 
-    Respond in JSON format with these keys:
-    - "action": one of ["click", "type:<text>", "press_enter", "hover"]
-    - "element_description": a string identifying the element based on its most distinctive attribute
+    fill_match = re.match(r'^(fill|enter|input)\s+(.+?)\s+(?:with|as)\s+(.+)$', user_prompt)
+    if fill_match:
+        return Action.FILL, fill_match.group(2).strip(), fill_match.group(3).strip()
 
-    Example responses:
-    - For "click the COMP3702 course card":
-    {{
-        "action": "click",
-        "element_description": "COMP3702"
-    }}
+    if user_prompt.startswith(('click', 'select', 'choose', 'press', 'open')):
+        element_desc = re.sub(r'^(click|select|choose|press|open)\s*', '', user_prompt).strip()
+        return Action.CLICK, element_desc, None
+    if user_prompt.startswith(('hover', 'mouse over')):
+        element_desc = re.sub(r'^(hover|mouse over)\s*', '', user_prompt).strip()
+        return Action.HOVER, element_desc, None
 
-    - For "click the Course Profile link":
-    {{
-        "action": "click",
-        "element_description": "Course Profile"
-    }}
+    return Action.CLICK, user_prompt, None
 
-    - For "mark as complete":
-    {{
-        "action": "click",
-        "element_description": "Mark as complete"
-    }}
 
-    - For "search for artificial intelligence":
-    {{
-        "action": "type:artificial intelligence",
-        "element_description": "search"
-    }}
+def get_active_page(context):
+    """Get the most recently active page, waiting briefly for new pages if needed"""
+    global CURRENT_PAGE, LAST_ACTION_TIME
 
-    - For "type myemail@example.com in the email field":
-    {{
-        "action": "type:myemail@example.com",
-        "element_description": "email"
-    }}
-    """
+    # If we recently performed an action that might open a new tab, wait a bit
+    if time.time() - LAST_ACTION_TIME < 3:
+        for _ in range(5):
+            if len(context.pages) > 1:
+                # Find the newest page that's not the current one
+                new_pages = [p for p in context.pages if p != CURRENT_PAGE]
+                if new_pages:
+                    return new_pages[-1]
+            time.sleep(0.5)
+
+    # Return current page if it's still valid, otherwise the last page in context
+    if CURRENT_PAGE and not CURRENT_PAGE.is_closed():
+        return CURRENT_PAGE
+    return context.pages[-1] if context.pages else None
 
 
 def interactive_angular_navigator():
-    """Interactive navigator specialized for AngularJS applications"""
     with sync_playwright() as p:
-        # Connect to existing browser
         browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-        page = browser.contexts[0].pages[0]
+        context = browser.contexts[0]
+        global CURRENT_PAGE, LAST_ACTION_TIME
+        CURRENT_PAGE = context.pages[0] if context.pages else None
+        LAST_ACTION_TIME = time.time()
 
-        # Cache page context
-        page_context = {
-            "title": page.title(),
-            "url": page.url,
-        }
+        def handle_new_page(new_page):
+            global CURRENT_PAGE, LAST_ACTION_TIME
+            print(f"\nNew tab opened: {new_page.url}")
+            CURRENT_PAGE = new_page
+            LAST_ACTION_TIME = time.time()
+            print(f"Now controlling tab: {CURRENT_PAGE.url}")
 
-        print("Connected to browser. You can now give commands to interact with the AngularJS page.")
-        print("Examples: 'Click COMP3702 course card', 'Click Course Profile', 'Mark as complete'")
-        warmup = query_ollama("This is just to warm you up. Just reply with '.'")
-        while True:
-            user_prompt = input("\nWhat would you like to do? (or 'quit' to exit): ").strip()
-
-            if user_prompt.lower() == 'quit':
-                break
-            if not user_prompt:
-                continue
-
-            # Generate AI prompt
-            ai_prompt = generate_ai_prompt(user_prompt, page_context)
-            response = query_ollama(ai_prompt)
-
-            if not response:
-                print("Failed to get response from Ollama.")
-                continue
-
+            # Wait for the new page to be ready
             try:
-                # Extract JSON from the response
-                json_str = re.search(r'\{.*\}', response, re.DOTALL).group()
-                command = json.loads(json_str)
+                CURRENT_PAGE.wait_for_load_state("networkidle", timeout=20000)
+            except Exception as e:
+                print(f"Warning: New tab took too long to load - {e}")
 
-                # Perform the action
-                success = perform_action_on_element(page, command["action"], command["element_description"])
+        context.on("page", handle_new_page)
+
+        print("Connected to browser. New tabs will immediately switch control.")
+        print("Examples:")
+        print("- 'Click COMP3702 course card'")
+        print("- 'Mark as complete'")
+        print("- 'Hover over user profile'")
+        print("- 'Fill username with myuser123'")
+        print("- 'Type in post content Hello world'")
+
+        while True:
+            try:
+                user_prompt = input("\nWhat would you like to do? (or 'quit' to exit): ").strip()
+                if user_prompt.lower() == 'quit':
+                    break
+                if not user_prompt:
+                    continue
+
+                # Get the most appropriate page to work with
+                current_page = get_active_page(context)
+                if not current_page or current_page.is_closed():
+                    if context.pages:
+                        CURRENT_PAGE = context.pages[-1]
+                        current_page = CURRENT_PAGE
+                        print(f"Recovered control of tab: {current_page.url}")
+                    else:
+                        print("No pages available, exiting...")
+                        break
+
+                action, element_desc, value = parse_user_command(user_prompt)
+                success = perform_action_on_element(current_page, action, element_desc, value)
 
                 if not success:
-                    print(f"Failed to perform action. Original AI response: {response}")
-
-                # Update cached context after action
-                page_context = {
-                    "title": page.title(),
-                    "url": page.url,
-                }
+                    print(f"Failed to perform action: {user_prompt}")
             except Exception as e:
-                print(f"Error interpreting command: {e}")
-                print(f"Original AI response: {response}")
+                print(f"Error processing command: {e}")
+                # Try to recover by getting the active page
+                if context.pages:
+                    CURRENT_PAGE = context.pages[-1]
+                    print(f"Recovered control of tab: {CURRENT_PAGE.url}")
+                else:
+                    print("No pages available, exiting...")
+                    break
 
 
 if __name__ == "__main__":

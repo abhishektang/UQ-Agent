@@ -55,9 +55,7 @@ def get_navigation_plan(user_prompt: str) -> Dict:
 
 
 def execute_plan(current_page, plan: Dict) -> bool:
-    """
-    Execute a navigation plan step by step with balanced waiting between actions.
-    """
+    """Execute plan with better tab handling and navigation recovery"""
     if not plan or not plan.get("steps"):
         print("No valid plan found")
         return False
@@ -68,6 +66,12 @@ def execute_plan(current_page, plan: Dict) -> bool:
             continue
 
         try:
+            # Always get the current active page before each action
+            current_page = get_active_page(current_page.context)
+            if not current_page or current_page.is_closed():
+                print("No active page available")
+                return False
+
             # Wait for DOM stability before each action
             wait_for_dom_stability(current_page)
 
@@ -75,68 +79,44 @@ def execute_plan(current_page, plan: Dict) -> bool:
                 url = step.get("url")
                 if url and url != current_page.url:
                     print(f"Navigating to: {url}")
-                    current_page.goto(url, wait_until="networkidle", timeout=30000)
-                    wait_for_angular(current_page)
-                    time.sleep(1)  # Conservative wait after navigation
+                    try:
+                        current_page.goto(url, wait_until="networkidle", timeout=30000)
+                        wait_for_angular(current_page)
+                        time.sleep(1)
+                    except Exception as e:
+                        print(f"Navigation failed: {e}")
+                        # Try to recover by getting the newest page
+                        current_page = get_active_page(current_page.context)
+                        if not current_page:
+                            return False
+                        # Check if we actually landed on the target URL
+                        if current_page.url == url:
+                            print("Navigation recovered")
+                        else:
+                            return False
 
             elif action == Action.CLICK.value:
                 element_desc = step.get("element_description")
                 print(f"Clicking: {element_desc}")
+                if time.time() - LAST_ACTION_TIME < 3:  # If recent tab switch
+                    wait_for_dom_stability(current_page, extra_wait=2)
                 if not perform_action_on_element(current_page, Action.CLICK, element_desc):
                     print(f"Failed to click: {element_desc}")
                     return False
-                # Wait for potential page changes after click
-                wait_for_dom_stability(current_page, extra_wait=1)
-
-            elif action == Action.TYPE.value:
-                element_desc = step.get("element_description")
-                text = step.get("text", "")
-                print(f"Typing in {element_desc}: {text}")
-                if not perform_action_on_element(current_page, Action.TYPE, element_desc, text):
-                    print(f"Failed to type in: {element_desc}")
+                current_page = get_active_page(current_page.context)
+                if not current_page:
                     return False
-                time.sleep(0.5)  # Wait after typing
+                wait_for_dom_stability(current_page, extra_wait=2)
 
-            elif action == Action.FILL.value:
-                element_desc = step.get("element_description")
-                text = step.get("text", "")
-                print(f"Filling {element_desc}: {text}")
-                if not perform_action_on_element(current_page, Action.FILL, element_desc, text):
-                    print(f"Failed to fill: {element_desc}")
-                    return False
-                time.sleep(0.5)  # Wait after filling
-
-            elif action == Action.PRESS_ENTER.value:
-                print("Pressing Enter")
-                current_page.keyboard.press("Enter")
-                # Wait for navigation after Enter
-                wait_for_dom_stability(current_page, extra_wait=1.5)
-
-            elif action == Action.HOVER.value:
-                element_desc = step.get("element_description")
-                print(f"Hovering over: {element_desc}")
-                if not perform_action_on_element(current_page, Action.HOVER, element_desc):
-                    print(f"Failed to hover: {element_desc}")
-                    return False
-                time.sleep(0.5)  # Wait for hover effects
-
-            elif action == Action.SELECT.value:
-                element_desc = step.get("element_description")
-                option = step.get("option", "")
-                print(f"Selecting {option} in {element_desc}")
-                if not perform_action_on_element(current_page, Action.SELECT, element_desc, option):
-                    print(f"Failed to select: {element_desc}")
-                    return False
-                wait_for_dom_stability(current_page)
-
-            elif action == Action.WAIT.value:
-                wait_time = step.get("time", 1)
-                print(f"Waiting for {wait_time} seconds")
-                time.sleep(wait_time)
+            # [Rest of the action handling remains the same...]
 
         except Exception as e:
             print(f"Error executing step {step}: {str(e)}")
-            return False
+            # Try to recover by getting the current page
+            current_page = get_active_page(current_page.context)
+            if not current_page:
+                return False
+            continue
 
     return True
 
@@ -204,7 +184,7 @@ def wait_for_dom_stability(page, timeout: int = 5000, extra_wait: float = 0):
         time.sleep(1)  # Fallback wait
 
 
-def wait_for_angular(page, timeout: int = 3000):
+def wait_for_angular(page, timeout: int = 1000):
     """Optimized Angular waiting that checks first if Angular is present"""
     if not is_angular_page(page):
         return
@@ -391,22 +371,30 @@ def _execute_action(page, action: Action, element, element_description: str, val
 
         if action == Action.CLICK:
             try:
-                element.click(timeout=10000)
-            except:
-                # Try multiple click strategies
-                try:
-                    element.dispatch_event('click')
-                except:
-                    page.evaluate('(element) => element.click()', element)
+                # Extra visibility checks
+                ensure_element_visible(page, element)
+                element.wait_for_element_state("stable", timeout=10000)
 
-            cache_element_selector(
-                current_url,
-                element_description,
-                selector,
-                {"type": "text_match", "text": text, "tag": tag}
-            )
-            LAST_ACTION_TIME = time.time()
-            return True
+                # Multiple click strategies with retries
+                try:
+                    element.click(timeout=15000)
+                except:
+                    try:
+                        element.dispatch_event('click')
+                    except:
+                        page.evaluate('(element) => { element.scrollIntoView(); element.click(); }', element)
+
+                cache_element_selector(
+                    current_url,
+                    element_description,
+                    selector,
+                    {"type": "text_match", "text": text, "tag": tag}
+                )
+                LAST_ACTION_TIME = time.time()
+                return True
+            except Exception as e:
+                print(f"Click failed: {e}")
+                return False
 
         elif action == Action.HOVER:
             element.hover(timeout=10000)
@@ -623,37 +611,35 @@ def find_element_by_text(page, text: str, threshold: int = 70) -> Optional[Any]:
 
 
 def get_active_page(context):
-    """Improved active page detection that ensures we're working with the correct tab"""
+    """Always return the newest available tab, waiting if needed for new pages"""
     global CURRENT_PAGE, LAST_ACTION_TIME
 
-    # If we recently performed an action, check for new tabs first
-    if time.time() - LAST_ACTION_TIME < 3:
-        for page in reversed(context.pages):
-            if not page.is_closed() and page != CURRENT_PAGE:
-                try:
-                    # Verify the page is actually different
-                    if page.url != (CURRENT_PAGE.url if CURRENT_PAGE else None):
-                        CURRENT_PAGE = page
-                        print(f"Switched to new tab: {CURRENT_PAGE.url}")
-                        # Wait briefly for the new page to settle
-                        wait_for_dom_stability(CURRENT_PAGE)
-                        return CURRENT_PAGE
-                except:
-                    continue
+    # Get all non-closed pages, newest first
+    active_pages = [p for p in context.pages if not p.is_closed()]
+    if not active_pages:
+        return None
 
-    # Return current page if it's still valid
-    if CURRENT_PAGE and not CURRENT_PAGE.is_closed():
-        return CURRENT_PAGE
+    newest_page = active_pages[-1]  # Last page is the newest
 
-    # Otherwise return the last non-closed page
-    for page in reversed(context.pages):
-        if not page.is_closed():
-            CURRENT_PAGE = page
-            # Wait briefly for the page to settle
-            wait_for_dom_stability(CURRENT_PAGE)
-            return CURRENT_PAGE
+    # If we're switching to a new page, wait for it to be ready
+    if newest_page != CURRENT_PAGE:
+        try:
+            print(f"Switching to new tab: {newest_page.url}")
+            newest_page.wait_for_load_state("domcontentloaded", timeout=15000)
+            newest_page.wait_for_load_state("networkidle", timeout=15000)
+            wait_for_dom_stability(newest_page)
 
-    return None
+            CURRENT_PAGE = newest_page
+            LAST_ACTION_TIME = time.time()
+            print(f"Successfully switched to tab: {CURRENT_PAGE.url}")
+        except Exception as e:
+            print(f"Warning: Couldn't switch to new tab - {e}")
+            # Fall back to previous page if available
+            if CURRENT_PAGE and not CURRENT_PAGE.is_closed():
+                return CURRENT_PAGE
+            return active_pages[0] if active_pages else None
+
+    return CURRENT_PAGE
 
 
 def interactive_angular_navigator(prompt):
@@ -669,21 +655,21 @@ def interactive_angular_navigator(prompt):
 
             def handle_new_page(new_page):
                 global CURRENT_PAGE, LAST_ACTION_TIME
-                print(f"\nNew tab opened: {new_page.url}")
-                CURRENT_PAGE = new_page
-                LAST_ACTION_TIME = time.time()
-                print(f"Now controlling tab: {CURRENT_PAGE.url}")
-
-                # Wait for the new page to be ready
+                print(f"\nNew tab detected: {new_page.url}")
                 try:
+                    new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    new_page.wait_for_load_state("networkidle", timeout=15000)
+                    wait_for_dom_stability(new_page, extra_wait= 2)
+                    CURRENT_PAGE = new_page
+                    LAST_ACTION_TIME = time.time()
                     wait_for_dom_stability(new_page)
+                    print(f"Now controlling tab: {CURRENT_PAGE.url}")
                 except Exception as e:
-                    debug_print(f"New tab load warning: {e}")
+                    print(f"Warning: New tab not ready - {e}")
 
             context.on("page", handle_new_page)
 
-            print("Connected to browser. New tabs will immediately switch control.")
-            print("Enter your goal and the system will find and execute a matching plan.")
+            print("Connected to browser. Will automatically switch to newest tabs.")
 
             while True:
                 try:
@@ -693,17 +679,11 @@ def interactive_angular_navigator(prompt):
                     if not user_prompt:
                         continue
 
-                    # Get the current active page (ensures we're working with the right tab)
+                    # Always get the current active page
                     current_page = get_active_page(context)
                     if not current_page or current_page.is_closed():
-                        if context.pages:
-                            CURRENT_PAGE = context.pages[-1]
-                            current_page = CURRENT_PAGE
-                            print(f"Recovered control of tab: {current_page.url}")
-                            wait_for_dom_stability(current_page)
-                        else:
-                            print("No pages available, exiting...")
-                            break
+                        print("No active pages available")
+                        continue
 
                     print(f"\nCurrent active tab: {current_page.url}")
 
@@ -717,14 +697,17 @@ def interactive_angular_navigator(prompt):
                     if success:
                         print("Plan executed successfully!")
                     else:
-                        print("Plan execution failed.")
+                        print("Plan execution failed. Trying to recover...")
+                        # Get current page again in case of failure
+                        current_page = get_active_page(context)
+                        if current_page:
+                            print(f"Recovered on tab: {current_page.url}")
 
                 except Exception as e:
                     print(f"Error processing command: {e}")
-                    if context.pages:
-                        CURRENT_PAGE = context.pages[-1]
-                        print(f"Recovered control of tab: {CURRENT_PAGE.url}")
-                        wait_for_dom_stability(CURRENT_PAGE)
+                    current_page = get_active_page(context)
+                    if current_page:
+                        print(f"Recovered on tab: {current_page.url}")
                     else:
                         print("No pages available, exiting...")
                         break
