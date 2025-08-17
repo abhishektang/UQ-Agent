@@ -1,0 +1,107 @@
+/* App-specific Styles */
+.app {
+  width: 800px;
+  height: 600px;
+  background: var(--bg-light);
+  position: relative;
+  overflow: hidden;
+}
+
+.view-container {
+  position: relative;
+  height: 100%;
+  min-height: inherit;
+  display: flex; /* Add flex to contain login-view */
+}
+
+/* Loading State */
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 300px;
+  color: var(--uq-purple);
+  font-weight: 600;
+  background: 
+    linear-gradient(to bottom, rgba(81, 36, 122, 0.03) 1px, transparent 1px);
+  background-size: 100% 10px;
+  animation: fadeIn 0.4s ease-out;
+}
+
+.loading::after {
+  content: "";
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--uq-purple-lightest);
+  border-top: 3px solid var(--uq-purple);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* Dashboard Button (floating action button) */
+.dashboard-btn {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--uq-accent);
+  color: var(--text-dark);
+  border: none;
+  padding: 12px 24px;
+  border-radius: 50px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  font-size: 0.9rem;
+  box-shadow: 
+    0 2px 5px rgba(0, 0, 0, 0.1),
+    0 4px 6px rgba(81, 36, 122, 0.15);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.dashboard-btn:hover {
+  background: var(--uq-accent-dark);
+  transform: translateX(-50%) translateY(-3px);
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.15),
+    0 6px 10px rgba(81, 36, 122, 0.2);
+}
+
+.dashboard-btn:active {
+  transform: translateX(-50%) translateY(0);
+  box-shadow: 
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    0 2px 4px rgba(81, 36, 122, 0.1);
+}
+
+/* Animations */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .dashboard-btn {
+    width: calc(100% - 40px);
+    max-width: 300px;
+    bottom: 15px;
+    padding: 10px 20px;
+  }
+  
+  .loading {
+    min-height: 250px;
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "UQ Agent",
+  "version": "0.2.1",
+  "description": "An assistant for UQ students to automate tasks like booking library rooms",
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "web_accessible_resources": [{
+    "resources": ["icons/*"],
+    "matches": ["<all_urls>"]
+  }],
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+     "cookies",
+     "scripting",
+      "https://auth.uq.edu.au/",
+  "https://portal.my.uq.edu.au/"
+  ],
+  "host_permissions": [
+    "*://portal.my.uq.edu.au/*",
+    "*://auth.uq.edu.au/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://portal.my.uq.edu.au/*"],
+      "js": ["contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
