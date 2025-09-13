@@ -200,14 +200,24 @@ For support and questions:
 - Create a new issue with detailed description
 - Contact the development team
 
-## 🔄 Version History
+🔄 Version History
 
-- **v1.0.0** (2025-08-17)
-  - Initial release
-  - Basic chat interface
-  - UQ portal automation
-  - Firebase integration
+v0.3.0 (2025-08-17)
 
----
+Added AI-powered task execution
+
+Users can type commands (e.g., “Show my grade”) for automated navigation
+
+v0.2.1 (2025-08-16)
+
+Improved login flow (auto-click Dashboard login button)
+
+v0.2.0 (2025-08-16)
+
+UI revamp, bug fixes, and real-time chat updates
+
+v0.1.0 (2025-08-16)
+
+Initial release with basic chat interface and Firebase integration
 
 **Note**: This extension is for educational purposes. Always comply with UQ's terms of service and academic policies when using automation tools.
