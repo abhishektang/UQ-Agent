@@ -93,10 +93,8 @@ UQ-Agent/
 ├── uq-agent-react/              # React + Vite Chrome Extension frontend
 │   ├── public/                  # Static assets
 │   ├── src/                     # React source code
-│   │   ├── components/          # Reusable UI components
-│   │   ├── views/               # App, Login, Chat views
-│   │   ├── services/            # Firebase, API integrations
-│   │   ├── styles/              # Stylesheets for each view
+│   │   ├── utils/                  # Utility scripts
+│   │   │   └── pythonServer.js     # Bridge to Python backend           
 │   │   └── main.jsx             # App entry point
 │   ├── manifest.json            # Chrome Extension manifest
 │   ├── vite.config.js           # Vite configuration
