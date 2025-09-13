@@ -90,14 +90,21 @@ npm run build
 
 ```
 UQ-Agent/
-├── src/                    # React frontend source
-│   ├── components/         # React components
-│   ├── FirebaseConfig.js   # Firebase configuration
-│   └── utils/             # Utility functions
-├── vectorDBClicksIntegrated.py  # Python automation server
-├── manifest.json          # Chrome extension manifest
-├── vite.config.js         # Vite configuration
-└── package.json           # Node.js dependencies
+├── uq-agent-react/              # React + Vite Chrome Extension frontend
+│   ├── public/                  # Static assets
+│   ├── src/                     # React source code
+│   │   ├── components/          # Reusable UI components
+│   │   ├── views/               # App, Login, Chat views
+│   │   ├── services/            # Firebase, API integrations
+│   │   ├── styles/              # Stylesheets for each view
+│   │   └── main.jsx             # App entry point
+│   ├── manifest.json            # Chrome Extension manifest
+│   ├── vite.config.js           # Vite configuration
+│   └── package.json             # Frontend dependencies
+│
+├── vectorDBClicksIntegrated.py  # AI-powered vector DB & automation logic
+│
+└── README.md                    # Project documentation
 ```
 
 ## 🔧 Configuration
